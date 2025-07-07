@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FlowMeter Dashboard with Flow Chart</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-blue-100 min-h-screen flex flex-col items-center justify-start pt-10">
+
+  <div class="text-center w-full max-w-md px-4">
+    <h1 class="text-3xl font-bold mb-4">Wurster City Water Monitoring</h1>
+
+    <!-- Connection Status -->
+    <div id="statusBox" class="mb-4">
+      <span id="statusText" class="text-sm font-semibold text-yellow-600">🔌 Connecting...</span>
+    </div>
+
+    <!-- Volume Display -->
+    <div class="bg-white shadow-xl rounded-2xl p-6 w-full mb-6">
+      <p class="text-gray-500">Total Consumtion</p>
+      <p id="volumValue" class="text-5xl font-bold text-green-600 mt-2">--</p>
+      <p class="text-base text-gray-500 mt-1">Liters</p>
+      <p class="text-sm text-gray-400 mt-2">Topic: <code>flowMeter/volum</code></p>
+    </div>
+
+    <!-- Flow Rate Display -->
+    <div class="bg-white shadow-xl rounded-2xl p-6 w-full mb-6">
+      <p class="text-gray-500">Flow Rate</p>
+      <p id="flowRateValue" class="text-4xl font-bold text-blue-600 mt-2">--</p>
+      <p class="text-base text-gray-500 mt-1">L/min</p>
+    </div>
+
+    <!-- Flow Rate Chart -->
+    <div class="bg-white shadow-xl rounded-2xl p-4 w-full">
+      <p class="text-gray-500 mb-2">Flow Rate History</p>
+      <canvas id="flowChart" height="200"></canvas>
+    </div>
+
+    <p class="text-xs text-gray-400 mt-6">MQTT via EMQX Public Broker</p>
+  </div>
+
+  <script>
+    const volumDisplay = document.getElementById("volumValue");
+    const flowRateDisplay = document.getElementById("flowRateValue");
+    const statusText = document.getElementById("statusText");
+
+    let previousVolume = null;
+    let previousTimestamp = null;
+
+    const flowRateHistory = [];
+    const timeLabels = [];
+
+    // Chart.js config
+    const ctx = document.getElementById('flowChart').getContext('2d');
+    const flowChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: timeLabels,
+        datasets: [{
+          label: 'Flow Rate (L/min)',
+          data: flowRateHistory,
+          backgroundColor: 'rgba(59, 130, 246, 0.2)',
+          borderColor: 'rgba(59, 130, 246, 1)',
+          borderWidth: 2,
+          tension: 0.4,
+          pointRadius: 4,
+          fill: true
+        }]
+      },
+      options: {
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'L/min'
+            }
+          },
+          x: {
+            title: {
+              display: true,
+              text: 'Time'
+            }
+          }
+        }
+      }
+    });
+
+    // MQTT setup
+    const client = mqtt.connect("wss://broker.emqx.io:8084/mqtt");
+
+    client.on("connect", () => {
+      statusText.textContent = "✅ Connected";
+      statusText.className = "text-sm font-semibold text-green-600";
+
+      client.subscribe("flowMeter/volum", (err) => {
+        if (err) {
+          statusText.textContent = "⚠️ Subscribe error";
+          statusText.className = "text-sm font-semibold text-red-600";
+        }
+      });
+    });
+
+    client.on("reconnect", () => {
+      statusText.textContent = "🔄 Reconnecting...";
+      statusText.className = "text-sm font-semibold text-yellow-600";
+    });
+
+    client.on("error", (err) => {
+      statusText.textContent = "❌ Connection Error";
+      statusText.className = "text-sm font-semibold text-red-600";
+    });
+
+    client.on("message", (topic, message) => {
+      if (topic === "flowMeter/volum") {
+        const currentVolume = parseFloat(message.toString());
+        const currentTime = Date.now();
+
+        volumDisplay.textContent = isNaN(currentVolume) ? "--" : currentVolume.toFixed(2);
+
+        // Calculate flow rate
+        if (previousVolume !== null && previousTimestamp !== null) {
+          const timeDiffMinutes = (currentTime - previousTimestamp) / 1000 / 60;
+          if (timeDiffMinutes > 0) {
+            const flowRate = ((currentVolume - previousVolume) / timeDiffMinutes);
+            flowRateDisplay.textContent = flowRate.toFixed(2);
+
+            // Store last 10 values
+            const timeLabel = new Date().toLocaleTimeString();
+
+            if (flowRateHistory.length >= 10) {
+              flowRateHistory.shift();
+              timeLabels.shift();
+            }
+
+            flowRateHistory.push(flowRate.toFixed(2));
+            timeLabels.push(timeLabel);
+            flowChart.update();
+          }
+        }
+
+        previousVolume = currentVolume;
+        previousTimestamp = currentTime;
+      }
+    });
+  </script>
+</body>
+</html>
